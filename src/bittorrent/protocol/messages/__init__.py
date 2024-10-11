@@ -1,6 +1,6 @@
 from .message_parser import parse_message
-
 from .message import Message
+
 from .keep_alive import KeepAlive
 from .choke import Choke
 from .unchoke import Unchoke
