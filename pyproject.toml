@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bittorrent"
+version = "0.0.1"
+
+description = "The BitTorrent protocol implementation in Python."
+
+readme = "README.md"
+readme-content-type = "text/markdown"
+
+authors = [
+    {name = "Zrekryu", email = "zrekryu@gmail.com"}
+]
+
+keywords = [
+    "bittorrent",
+    "torrent",
+    "file sharing",
+    "peer-to-peer",
+    "asynchronous"
+]
+
+requires-python = ">=3.11"
+
+dependencies = [
+    "aiofiles",
+    "httpx",
+    "libbencode"
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Utilities",
+    "Topic :: System :: Shells",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+
+[project.urls]
+Repository = "https://github.com/zrekryu/bittorrent"
+Issues = "https://github.com/zrekryu/bittorrent/issues"
