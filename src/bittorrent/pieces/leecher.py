@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Callable, Self
+from typing import Self
 
 from ..exceptions import PeerError
 from ..enums import BlockStatus
@@ -29,6 +29,7 @@ class Leecher:
     MAX_BLOCK_REQUESTS_TO_PEERS: int = 10
     MAX_BLOCK_REQUESTS_PER_PEER: int = 10
     PEER_BLOCK_DELIVERY_TIMEOUT: int = 30
+    ACCEPT_UNREQUESTED_BLOCKS: bool = True
     
     def __init__(
         self: Self,
@@ -39,7 +40,8 @@ class Leecher:
         swarm: Swarm,
         max_block_requests_to_peers: int = MAX_BLOCK_REQUESTS_TO_PEERS,
         max_block_requests_per_peer: int = MAX_BLOCK_REQUESTS_PER_PEER,
-        peer_block_delivery_timeout: int = PEER_BLOCK_DELIVERY_TIMEOUT
+        peer_block_delivery_timeout: int = PEER_BLOCK_DELIVERY_TIMEOUT,
+        accept_unrequested_blocks: bool = ACCEPT_UNREQUESTED_BLOCKS
         ) -> None:
         self.download_path = download_path
         self.torrent = torrent
@@ -49,6 +51,7 @@ class Leecher:
         self.max_block_requests_to_peers = max_block_requests_to_peers
         self.max_block_requests_per_peer = max_block_requests_per_peer
         self.peer_block_delivery_timeout = peer_block_delivery_timeout
+        self.accept_unrequested_blocks = accept_unrequested_blocks
         
         self.__peer_queue: asyncio.Queue = asyncio.Queue()
         self.__peer_message_queue: asyncio.Queue = asyncio.Queue()
@@ -89,7 +92,7 @@ class Leecher:
         self.swarm.start_peer_periodic_keep_alive(peer)
         self.swarm.start_peer_inactivity_monitor(peer)
         
-        await peer.send_message(Interested())
+        await peer.send_interested_message()
     
     async def __on_peer_message(self: Self) -> None:
         while True:
@@ -111,24 +114,41 @@ class Leecher:
     async def __handle_piece_message(self: Self, peer: Peer, piece_msg: Piece) -> None:
         index: int = piece_msg.index
         begin: int = piece_msg.begin
-        length: int = piece_msg.length
-        logger.debug(f"[{peer.addr_str}] - Received piece message: {index}:{begin}:{length}.")
+        logger.debug(f"[{peer.addr_str}] - Received piece message: {index}:{begin}.")
         
         if (piece_msg.index, piece_msg.begin) not in peer.requested_block_requests:
             logger.debug(f"[{peer.addr_str}] - Received unrequested piece: {index}:{begin}.")
+            
+            if not self.accept_unrequested_blocks:
+                logger.debug(f"[{peer.addr_str}] - Rejected unrequested piece: {index}:{begin}.")
+                return
         
-        self.piece_manager.set_block_status(index, begin, BlockStatus.AVAILABLE)
+        if (index, begin) not in self.piece_manager.missing_blocks:
+            logger.debug(f"[{peer.addr_str}] - Received piece is not missing: {index}:{begin}.")
+            return
         
-        if self.piece_manager.get_piece(index).all_blocks_available:
+        self.piece_manager.set_block_data(index, begin, piece.data)
+        self.piece_manager.set_block_status_as_available(index, begin)
+        
+        if self.piece_manager.are_all_blocks_available(index):
+            logger.debug(f"All blocks of piece ({index}) are now available.")
+            
             if not self.piece_manager.verify_piece(index, piece_msg.piece):
                 logger.error(f"[{peer.addr_str}] - Received piece that did not match hash: {index}:{begin}.")
                 return
-        
-        try:
-            await self.file_handler.write_piece(index, begin, piece_msg.data)
-        except Exception as exc:
-            logger.error(f"Failed to write piece '")
-        logger.info(f"[{peer.addr_str}] - Downloaded piece '{index}'.")
+            
+            # Write piece to disk.
+            try:
+                await self.file_handler.write_piece(index, piece=self.piece_manager.get_piece_data(index))
+            except Exception as exc:
+                logger.error(f"Failed to write piece ({index}): {exc}.")
+            else:
+                logger.debug(f"Downloaded piece: {index}.")
+                self.piece_manager.clear_piece_data(index)
+                self.piece_manager.bitfield.set_piece(index)
+                
+                # Broadcast have piece.
+                await self.swarm.broadcast_have_piece(index)
     
     async def stop(self: Self) -> None:
         self.swarm.remove_peer_queue(self.__peer_queue)

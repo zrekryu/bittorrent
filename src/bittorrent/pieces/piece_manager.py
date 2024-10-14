@@ -25,6 +25,8 @@ class PieceManager:
         self.requested_blocks: list[tuple[int, int]] = self.get_requested_blocks()
         
         self.pieces_availability_counter: Counter = Counter()
+        
+        self.bitfield: BitField = self.create_bitfield_from_pieces()
     
     @classmethod
     def create_pieces(
@@ -40,11 +42,12 @@ class PieceManager:
         
         pieces: list[Piece] = []
         for piece_index in range(total_pieces):
-            piece: Piece = Piece(index=piece_index)
+            is_last_piece: bool = (piece_index == last_piece_index)
+            piece: Piece = Piece(index=piece_index, is_last_piece=is_last_piece)
             block_status: BlockStatus = BlockStatus.AVAILABLE if available else BlockStatus.MISSING
             
             # Last piece, which may be smaller than the piece length.
-            if piece_index == last_piece_index and last_piece_length > 0:
+            if is_last_piece and last_piece_length > 0:
                 blocks_in_last_piece: int = math.ceil(last_piece_length / block_size)
                 blocks: list[Block] = [
                     Block(
@@ -65,11 +68,17 @@ class PieceManager:
         
         return pieces
     
+    def create_bitfield_from_pieces(self: Self) -> BitField:
+        return BitField.from_pieces_availability(piece.all_blocks_available for piece in self.pieces)
+    
     def get_missing_blocks(self: Self) -> list[tuple[int, int]]:
         return [(piece.index, block.begin) for piece in self.pieces for block in piece.get_missing_blocks()]
     
     def get_requested_blocks(self: Self) -> list[tuple[int, int]]:
         return [(piece.index, block.begin) for piece in self.pieces for block in piece.get_requested_blocks()]
+    
+    def has_piece(self: Self, index: int) -> bool:
+        return index in self.pieces
     
     def get_piece(self: Self, index: int) -> Piece:
         try:
@@ -77,14 +86,35 @@ class PieceManager:
         except IndexError:
             raise IndexError(f"Piece not found: {index}")
     
+    def are_all_blocks_available(self: Self, index: int) -> bool:
+        return self.get_piece(index).all_blocks_available
+    
+    def get_piece_data(self: Self, index: int) -> bytes:
+        return self.get_piece(index).get_blocks_data()
+    
+    def clear_piece_data(self: Self, index: int) -> None:
+        self.get_piece(index).clear_blocks_data()
+    
     def get_block(self: Self, index: int, begin: int) -> Block:
         return self.get_piece(index).get_block(begin)
     
-    def set_block_status(self: Self, index: int, begin: int, status: BlockStatus) -> None:
-        self.get_block(index, begin).status = status
-    
     def get_block_length(self: Self, index: int, begin: int) -> int:
         return self.get_block(index, begin).length
+    
+    def get_block_status(self: Self, index: int, begin: int) -> BlockStatus:
+        return self.get_block(index, begin).status
+    
+    def set_block_status_as_missing(self: Self, index: int, begin: int) -> None:
+        self.get_block(index, begin).set_status_as_missing()
+    
+    def set_block_status_as_requested(self: Self, index: int, begin: int) -> None:
+        self.get_block(index, begin).set_status_as_requested()
+    
+    def set_block_status_as_available(self: Self, index: int, begin: int) -> None:
+        self.get_block(index, begin).set_status_as_available()
+    
+    def set_block_data(self: Self, index: int, begin: int, data: bytes) -> None:
+        self.get_block(index, begin).set_data(data)
     
     @property
     def all_pieces_available(self: Self) -> bool:

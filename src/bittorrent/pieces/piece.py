@@ -4,8 +4,9 @@ from typing import Self
 from .block import Block
 
 class Piece:
-    def __init__(self: Self, index: int) -> None:
+    def __init__(self: Self, index: int, is_last_piece: bool) -> None:
         self.index = index
+        self.is_last_piece = is_last_piece
         
         self.blocks: list[Block] = []
     
@@ -50,5 +51,12 @@ class Piece:
     def get_requested_blocks(self: Self) -> list[Block]:
         return [block for block in self.blocks if block.is_requested]
     
+    def get_blocks_data(self: Self) -> bytes:
+        return b"".join(block.data for block in self.blocks)
+    
+    def clear_blocks_data(self: Self) -> None:
+        for block in self.blocks:
+            block.clear_data()
+    
     def __repr__(self: Self) -> str:
-        return f"Piece(index={self.index}, blocks={self.blocks})"
+        return f"Piece(index={self.index}, is_last_piece={self.is_last_piece}, blocks={self.blocks})"
