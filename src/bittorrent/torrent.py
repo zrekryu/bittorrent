@@ -27,6 +27,7 @@ class Torrent:
         self.total_length: int = sum((file[b"length"] for file in self.info[b"files"])) if b"files" in self.info else self.info[b"length"]
         self.last_piece_length: int = self.total_length % self.piece_length
         self.total_pieces: int = math.ceil(self.total_length / self.piece_length)
+        self.last_piece_index: int = self.total_pieces - 1
         
         self.is_private: bool = bool(self.info.get(b"private"))
         

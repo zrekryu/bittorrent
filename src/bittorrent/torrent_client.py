@@ -27,6 +27,7 @@ from .protocol.peer import Peer
 from .protocol.swarm import Swarm
 
 from .pieces.piece_manager import PieceManager
+from .pieces.file_handler import FileHandler
 from .pieces.leecher import Leecher
 
 class TorrentClient:
@@ -61,6 +62,9 @@ class TorrentClient:
         
         self.piece_manager: PieceManager | None = None
         self.swarm: Swarm | None = None
+        
+        self.file_handler: FileHandler | None = None
+        
         self.leecher: Leecher | None = None
     
     @classmethod
@@ -109,7 +113,7 @@ class TorrentClient:
             tracker_http_timeout=self.torrent_settings.get_var("tracker_http_timeout"),
             tracker_udp_timeout=self.torrent_settings.get_var("tracker_udp_timeout"),
             tracker_udp_retries=self.torrent_settings.get_var("tracker_udp_retries")
-        )
+            )
     
     async def __announce_stopped_event_to_trackers(self: Self) -> None:
         tasks: list[asyncio.Task] = []
@@ -161,12 +165,13 @@ class TorrentClient:
                 piece_length=self.torrent.piece_length,
                 last_piece_length=self.torrent.last_piece_length,
                 total_pieces=self.torrent.total_pieces,
+                last_piece_index=self.torrent.last_piece_index,
                 available=False,
                 block_size=self.torrent_settings.get_var("block_size")
             ),
             pieces_hash=self.torrent.info[b"pieces"],
             block_size=self.torrent_settings.get_var("block_size")
-        )
+            )
     
     def __initialize_swarm(self: Self) -> Swarm:
         return Swarm(
@@ -181,17 +186,26 @@ class TorrentClient:
             max_connections=self.torrent_settings.get_var("max_connections"),
             keep_alive_interval=self.torrent_settings.get_var("keep_alive_interval"),
             keep_alive_timeout=self.torrent_settings.get_var("keep_alive_timeout")
-        )
+            )
+    
+    def __initialize_file_handler(self: Self) -> FileHandler:
+        return FileHandler(
+            name=self.torrent.name,
+            piece_length=self.torrent.piece_length,
+            last_piece_length=self.torrent.last_piece_length,
+            last_piece_index=self.torrent.last_piece_index,
+            path=self.torrent_settings.get_var("download_path"),
+            files=self.torrent.info[b"info"][b"files"] if self.torrent.has_multiple_files else None
+            )
     
     def __initialize_leecher(self: Self) -> Leecher:
         return Leecher(
-            download_path=self.torrent_settings.get_var("download_path"),
-            torrent=self.torrent,
             handshake=self.handshake,
             piece_manager=self.piece_manager,
             swarm=self.swarm,
+            file_handler=self.file_handler,
             max_block_requests_per_peer=self.torrent_settings.get_var("max_block_requests_per_peer")
-        )
+            )
     
     async def __add_peers_info_to_tracker(self: Self, tracker: TrackerHTTP | TrackerUDP, peers: list[Peer]) -> None:
         if tracker not in self.tracker_peers_info:
@@ -212,6 +226,9 @@ class TorrentClient:
         
         if not self.swarm:
             self.swarm = self.__initialize_swarm()
+        
+        if not self.file_handler:
+            self.file_handler = self.__initialize_file_handler()
         
         if not self.leecher:
             self.leecher = self.__initialize_leecher()
