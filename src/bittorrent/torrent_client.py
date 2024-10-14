@@ -218,7 +218,6 @@ class TorrentClient:
         
         self.leecher.start()
         
-        
         trackers_responses: list[tuple[TrackerHTTP, TrackerHTTPAnnounceResponse] | tuple[TrackerUDP, TrackerUDPAnnounceResponse]]
         trackers_responses = await self.multi_tracker_announcer.announce_trackers()
         for tracker, response in trackers_responses:
