@@ -1,5 +1,4 @@
 import struct
-import math
 from typing import Iterable, Self
 
 from .message import Message
@@ -21,21 +20,29 @@ class BitField(Message):
     def from_bytes(cls: type[Self], payload: bytes) -> Self:
         return cls(bytearray(payload))
     
+    def has_piece(self: Self, index: int) -> bool:
+        if index < 0 or index >= len(self.data) * 8:
+            raise IndexError(f"Piece index out of range: {index}")
+        
+        byte_index: int = index // 8
+        bit_index: int = index % 8
+        return self.data[byte_index] >> (7 - bit_index) & 1 != 0
+    
     def set_piece(self: Self, index: int) -> None:
         if index < 0 or index >= len(self.data) * 8:
-            raise IndexError("Piece index out of range")
+            raise IndexError(f"Piece index out of range: {index}")
         
         piece_index: int = index // 8
         bit_index: int = index % 8
         self.data[piece_index] |= 1 << (7 - bit_index)
     
-    def has_piece(self: Self, index: int) -> bool:
+    def unset_piece(self: Self, index: int) -> None:
         if index < 0 or index >= len(self.data) * 8:
-            raise IndexError("Piece index out of range")
+            raise IndexError(f"Piece index out of range: {index}")
         
         piece_index: int = index // 8
         bit_index: int = index % 8
-        return self.data[piece_index] >> (7 - bit_index) != 0
+        self.data[piece_index] &= ~(1 << (7 - bit_index))
     
     def iter_pieces_availability(self: Self) -> Iterable[tuple[int, bool]]:
         for byte_index, byte in enumerate(self.data):
@@ -58,15 +65,29 @@ class BitField(Message):
     
     @classmethod
     def create_bitfield(cls: type[Self], total_pieces: int, available: bool) -> Self:
-        num_bytes: int = math.ceil(total_pieces / 8)
+        num_bytes: int = (total_pieces + 7) // 8
         
         byte_value: int = 0xFF if available else 0x00
         bitfield: bytearray = bytearray([byte_value] * num_bytes)
         
         # Set the spare bits to 0.
-        used_bits: int
-        if available and (used_bits := total_pieces % 8) != 0:
-            bitfield[-1] &= 0xFF << (8 - used_bits)
+        if total_pieces and available:
+            spare_bits: int = 8 - (total_pieces % 8)
+            if spare_bits:
+                bitfield[-1] &= (0xFF << spare_bits)
+        
+        return cls(bitfield)
+    
+    @classmethod
+    def from_pieces_availability(cls: type[Self], pieces_availability: Iterable[bool]) -> Self:
+        num_bytes: int = (len(pieces_availability) + 7) // 8
+        bitfield: bytearray = bytearray(num_bytes)
+        
+        for index, available in enumerate(pieces_availability):
+            if available:
+                byte_index: int = index // 8
+                bit_index: int = index % 8
+                bitfield[byte_index] |= 1 << (7 - bit_index)
         
         return cls(bitfield)
     
