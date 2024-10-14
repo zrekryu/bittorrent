@@ -34,11 +34,11 @@ class PieceManager:
         piece_length: int,
         last_piece_length: int,
         total_pieces: int,
+        last_piece_index: int,
         available: bool,
         block_size: int = Block.BLOCK_SIZE
         ) -> list[Piece]:
         blocks_per_piece: int = piece_length // block_size
-        last_piece_index: int = total_pieces - 1
         
         pieces: list[Piece] = []
         for piece_index in range(total_pieces):
@@ -69,7 +69,10 @@ class PieceManager:
         return pieces
     
     def create_bitfield_from_pieces(self: Self) -> BitField:
-        return BitField.from_pieces_availability(piece.all_blocks_available for piece in self.pieces)
+        return BitField.from_pieces_availability(
+            total_pieces=len(self.pieces),
+            pieces_availability=(piece.all_blocks_available for piece in self.pieces)
+            )
     
     def get_missing_blocks(self: Self) -> list[tuple[int, int]]:
         return [(piece.index, block.begin) for piece in self.pieces for block in piece.get_missing_blocks()]

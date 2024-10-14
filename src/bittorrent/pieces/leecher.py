@@ -5,8 +5,6 @@ from typing import Self
 from ..exceptions import PeerError
 from ..enums import BlockStatus
 
-from ..torrent import Torrent
-
 from ..protocol.handshake import Handshake
 from ..protocol.peer import Peer
 from ..protocol.swarm import Swarm
@@ -33,21 +31,19 @@ class Leecher:
     
     def __init__(
         self: Self,
-        download_path: str,
-        torrent: Torrent,
         handshake: Handshake,
         piece_manager: PieceManager,
         swarm: Swarm,
+        file_handler: FileHandler,
         max_block_requests_to_peers: int = MAX_BLOCK_REQUESTS_TO_PEERS,
         max_block_requests_per_peer: int = MAX_BLOCK_REQUESTS_PER_PEER,
         peer_block_delivery_timeout: int = PEER_BLOCK_DELIVERY_TIMEOUT,
         accept_unrequested_blocks: bool = ACCEPT_UNREQUESTED_BLOCKS
         ) -> None:
-        self.download_path = download_path
-        self.torrent = torrent
         self.handshake = handshake
         self.piece_manager = piece_manager
         self.swarm = swarm
+        self.file_handler = file_handler
         self.max_block_requests_to_peers = max_block_requests_to_peers
         self.max_block_requests_per_peer = max_block_requests_per_peer
         self.peer_block_delivery_timeout = peer_block_delivery_timeout
@@ -58,13 +54,6 @@ class Leecher:
         
         self.__on_peer_connected_task: asyncio.Task | None = None
         self.__on_peer_message_task: asyncio.Task | None = None
-        
-        self.file_handler: FileHandler = FileHandler(
-            name=self.torrent.name,
-            piece_length=self.torrent.piece_length,
-            path=self.download_path,
-            files=self.torrent.info[b"info"][b"files"] if self.torrent.has_multiple_files else None
-            )
     
     def start(self: Self) -> None:
         if self.piece_manager.all_pieces_available:

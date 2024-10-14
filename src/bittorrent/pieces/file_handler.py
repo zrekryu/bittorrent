@@ -71,7 +71,7 @@ class FileHandler:
     
     async def write_piece_on_single_file(self: Self, index: int, piece: bytes) -> None:
         path_obj: Path = Path(self.path, self.name)
-        path_obj.touch()
+        path_obj.touch(exist_ok=True)
         
         offset: int = self.piece_length * index
         await self.write_data(str(path_obj), offset, piece)
@@ -83,3 +83,29 @@ class FileHandler:
             path_obj.touch(exist_ok=True)
             
             await self.write_data(str(path_obj), file["offset"], piece)
+    
+    async def read_data(self: Self, path: str, offset: int, data: bytes) -> bytes:
+        async with aiofiles.open(path=path, mode="r+b") as file:
+            await file.seek(offset)
+            return await file.read(data)
+    
+    async def read_piece(self: Self, index: int, piece: bytes) -> bytes:
+        if self.files:
+            return await self.read_piece_from_multiple_files(index, piece)
+        else:
+            return await self.read_piece_from_single_file(index, piece)
+    
+    async def read_piece_from_single_file(self: Self, index: int, piece: bytes) -> bytes:
+        path_obj: Path = Path(self.path, self.name)
+        path_obj.touch(exist_ok=True)
+        
+        offset: int = self.piece_length * index
+        return await self.read_data(str(path_obj), offset, piece)
+    
+    async def read_piece_from_multiple_files(self: Self, index: int, piece: bytes) -> bytes:
+        for file in self.get_files_by_piece_index(index):
+            path_obj: Path = Path(self.path, self.name, *(p.decode("utf-8") for p in file[b"path"]))
+            path_obj.parent.mkdir(parents=True, exist_ok=True)
+            path_obj.touch(exist_ok=True)
+            
+            return await self.read_data(str(path_obj), file["offset"], piece)
