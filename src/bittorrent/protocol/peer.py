@@ -6,7 +6,16 @@ from ..exceptions import PeerError
 from ..enums import PeerStatus
 
 from .handshake import Handshake
-from .messages import parse_message, Message, BitField
+from .messages import (
+    parse_message,
+    Message,
+    KeepAlive,
+    Choke, Unchoke,
+    Have, BitField,
+    Interested, NotInterested,
+    Request, Piece, Cancel,
+    Port
+    )
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -179,9 +188,9 @@ class Peer:
         
         # Receive the handshake.
         data: bytes = await self.recv_handshake()
+        peer_handshake: Handshake = Handshake.from_bytes(data)
         
         # Verify the received handshake.
-        peer_handshake: Handshake = Handshake.from_bytes(data)
         self.verify_handshake(handshake, peer_handshake)
         
         self.handshake = peer_handshake
@@ -250,5 +259,45 @@ class Peer:
             logger.error(f"[{self.addr_str}] - Failed to send message: {exc}.")
             raise PeerError(f"Failed to send message to peer [{self.addr_str}]: {exc}")
     
+    async def send_keep_alive_message(self: Self) -> None:
+        await self.send_message(KeepAlive())
+    
+    async def send_choke_message(self: Self) -> None:
+        await self.send_message(Choke())
+    
+    async def send_unchoke_message(self: Self) -> None:
+        await self.send_message(Unchoke())
+    
+    async def send_interested_message(self: Self) -> None:
+        await self.send_message(Interested())
+    
+    async def send_not_interested_message(self: Self) -> None:
+        await self.send_message(NotInterested())
+    
+    async def send_have_message(self: Self, index: int) -> None:
+        await self.send_message(Have(index))
+    
+    async def send_bitfield_message(self: Self, data: bytes) -> None:
+        await self.send_message(BitField(data))
+    
+    async def send_request_message(self: Self, index: int, begin: int, length: int) -> None:
+        await self.send_message(Request(index, begin, length))
+    
+    async def send_piece_message(self: Self, index: int, begin: int, piece: bytes) -> None:
+        await self.send_message(Piece(index, begin, piece))
+    
+    async def send_cancel_message(self: Self, index: int, begin: int, length: int) -> None:
+        await self.send_message(Cancel(index, begin, length))
+    
+    async def send_port_message(self: Self, listen_port: int) -> None:
+        await self.send_message(Port(listen_port))
+    
     def __repr__(self: Self) -> str:
-        return f"Peer(ip={self.ip}, port={self.port})"
+        return (
+            f"Port("
+            f"ip={self.ip}, "
+            f"port={self.port}, "
+            f"is_choking={self.is_choking}, "
+            f"is_interested={self.is_interested}"
+            ")"
+            )

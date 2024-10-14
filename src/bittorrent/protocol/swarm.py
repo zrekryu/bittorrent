@@ -21,6 +21,7 @@ class Swarm:
     MAX_CONNECTIONS: int = 200
     KEEP_ALIVE_INTERVAL: int = 60
     KEEP_ALIVE_TIMEOUT: int = 120
+    SEND_REDUNDANT_HAVE: bool = True
     
     def __init__(
         self: Self,
@@ -31,7 +32,8 @@ class Swarm:
         chunk_size: int = Peer.CHUNK_SIZE,
         max_connections: int = MAX_CONNECTIONS,
         keep_alive_interval: int = KEEP_ALIVE_INTERVAL,
-        keep_alive_timeout: int = KEEP_ALIVE_TIMEOUT
+        keep_alive_timeout: int = KEEP_ALIVE_TIMEOUT,
+        send_redundant_have: bool = SEND_REDUNDANT_HAVE
         ) -> None:
         self.bitfield = bitfield
         self.piece_manager = piece_manager
@@ -134,7 +136,7 @@ class Swarm:
             
             if remaining_time <= 0:
                 try:
-                    await peer.send_message(KeepAlive())
+                    await peer.send_keep_alive_message()
                 except PeerError:
                     await self.disconnect_peer(peer)
                 else:
@@ -228,7 +230,10 @@ class Swarm:
         return await asyncio.gather(*(self.connect_peer(peer_info) for peer_info in peers_info), return_exceptions=return_exceptions)
     
     def has_unchoked_peers(self: Self) -> bool:
-        return any(peer for peer in self.peers if not peer.is_choking)
+        return any(True for peer in self.peers if not peer.is_choking)
+    
+    def get_unchoked_peers(self: Self) -> list[Peer]:
+        return [peer for peer in self.peers if not peer.is_choking]
     
     async def await_peer_add_event(self: Self) -> None:
         self.__peer_add_event.clear()
@@ -237,3 +242,10 @@ class Swarm:
     async def await_peer_unchoke_event(self: Self) -> None:
         self.__peer_unchoke_event.clear()
         await self.__peer_unchoke_event.wait()
+    
+    async def broadcast_have_piece(self: Self, index: int) -> None:
+        for peer in self.piece_manager.get_unchoked_peers():
+            if peer.bitfield.has_piece(index) and not self.send_redundant_have:
+                continue
+            
+            await peer.send_have_message(index)
