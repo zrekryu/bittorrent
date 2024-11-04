@@ -1,4 +1,3 @@
-from hashlib import md5
 from pathlib import Path
 from typing import Self, TypedDict
 
@@ -78,7 +77,7 @@ class FileHandler:
     
     async def write_piece_on_multiple_files(self: Self, index: int, piece: bytes) -> None:
         for file in self.get_files_by_piece_index(index):
-            path_obj: Path = Path(self.path, self.name, *(p.decode("utf-8") for p in file[b"path"]))
+            path_obj: Path = Path(self.path, self.name, *(path.decode("utf-8") for path in file[b"path"]))
             path_obj.parent.mkdir(parents=True, exist_ok=True)
             path_obj.touch(exist_ok=True)
             
