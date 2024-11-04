@@ -10,6 +10,8 @@ from typing import Any
 
 import libbencode
 
+from .protocol.peer_address import PeerAddress
+
 def generate_transaction_id() -> int:
     return int.from_bytes(os.urandom(4), byteorder="big")
 
@@ -54,12 +56,13 @@ def parse_tracker_uri(uri: str) -> tuple[str, str | tuple[str, int]]:
     else:
         raise ValueError(f"Unsupported tracker URI scheme: {scheme}")
 
-def decode_compact_peers(data: bytes) -> list[tuple[str, int]]:
+def decode_compact_peers(data: bytes) -> list[PeerAddress]:
     return [
-        (
-            socket.inet_ntoa(data[i:i+4]),  # IP
-            struct.unpack(">H", data[i+4:i+6])[0]  # PORT
-        ) for i in range(0, len(data), 6)
+        PeerAddress(
+            host=socket.inet_ntoa(data[i:i+4]),
+            port=struct.unpack(">H", data[i+4:i+6])[0]
+            )
+        for i in range(0, len(data), 6)
         ]
 
 async def get_free_bittorrent_port() -> int:
@@ -84,3 +87,6 @@ def convert_ip_to_integer(ip_address: str) -> int:
             return int.from_bytes(socket.inet_pton(socket.AF_INET6, ip_address), byteorder="big")
         case _:
             raise ValueError(f"Unsupported IP version: {ip_version}")
+
+def create_peer_addresses(peer_addresses: list[tuple[str, int]]) -> list[PeerAddress]:
+    return [PeerAddress(host, port) for host, port in peer_addresses]

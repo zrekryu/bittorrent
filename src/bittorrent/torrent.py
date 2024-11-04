@@ -21,10 +21,11 @@ class Torrent:
         
         self.comment: bytes | None = self.metadata.get(b"comment")
         
+        # Helper attributes.
         self.name: str = self.info[b"name"].decode("utf-8")
         
         self.piece_length: int = self.info[b"piece length"]
-        self.total_length: int = sum((file[b"length"] for file in self.info[b"files"])) if b"files" in self.info else self.info[b"length"]
+        self.total_length: int = sum(file[b"length"] for file in self.info[b"files"]) if b"files" in self.info else self.info[b"length"]
         self.last_piece_length: int = self.total_length % self.piece_length
         self.total_pieces: int = math.ceil(self.total_length / self.piece_length)
         self.last_piece_index: int = self.total_pieces - 1
@@ -34,7 +35,7 @@ class Torrent:
         self.has_multiple_files: bool = b"files" in self.info
     
     @classmethod
-    async def from_file(cls: type[Self], path: str) -> None:
+    async def from_file(cls: type[Self], path: str) -> Self:
         async with aiofiles.open(path, mode="rb") as file:
             return cls(await file.read())
     
