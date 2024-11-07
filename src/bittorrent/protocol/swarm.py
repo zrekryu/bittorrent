@@ -3,6 +3,8 @@ import logging
 from typing import Generator, Self
 
 from ..exceptions import PeerError
+from ..pieces.piece import Piece
+from ..pieces.block import Block
 from ..pieces.piece_manager import PieceManager
 
 from .peer import Peer
@@ -20,7 +22,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 class Swarm:
     MAX_CONNECTIONS: int = 200
     KEEP_ALIVE_INTERVAL: int = 60
-    KEEP_ALIVE_TIMEOUT: int = 120
+    INACTIVITY_TIMEOUT: int = 120
     SEND_ALREADY_HAVE_PIECE: bool = True
     
     def __init__(
@@ -32,8 +34,8 @@ class Swarm:
         chunk_size: int = Peer.CHUNK_SIZE,
         max_connections: int = MAX_CONNECTIONS,
         keep_alive_interval: int | None = KEEP_ALIVE_INTERVAL,
-        keep_alive_timeout: int | None = KEEP_ALIVE_TIMEOUT,
-        send_have_message: bool = SEND_ALREADY_HAVE_PIECE
+        inactivity_timeout: int | None = INACTIVITY_TIMEOUT,
+        send_already_have_piece: bool = SEND_ALREADY_HAVE_PIECE
         ) -> None:
         self.bitfield = bitfield
         self.piece_manager = piece_manager
@@ -43,7 +45,7 @@ class Swarm:
         
         self.max_connections = max_connections
         self.keep_alive_interval = keep_alive_interval
-        self.keep_alive_timeout = keep_alive_timeout
+        self.inactivity_timeout = inactivity_timeout
         
         self.send_already_have_piece = send_already_have_piece
         
@@ -53,8 +55,8 @@ class Swarm:
         self._peer_message_queues: list[asyncio.Queue] = []
         
         self._peer_message_reading_tasks: dict[Peer, asyncio.Task] = {}
-        self._peer_keep_alive_interval_tasks: dict[Peer, asyncio.Task] = {}
         self._peer_keep_alive_timeout_tasks: dict[Peer, asyncio.Task] = {}
+        self._peer_keep_alive_interval_tasks: dict[Peer, asyncio.Task] = {}
     
     async def broadcast_peer(self: Self, peer: Peer) -> None:
         await asyncio.gather(*(queue.put(peer) for queue in self._peer_queues))
@@ -64,13 +66,21 @@ class Swarm:
     
     async def broadcast_peer_messages(self: Self, peer: Peer) -> None:
         while peer.is_connected:
-            message: Message = await peer.read_message()
+            try:
+                message: Message = await peer.read_message()
+            except PeerError as exc:
+                logger.error(f"[{peer.addr_str}] - Failed to read peer message: {exc}.")
+                await self.remove_peer(peer)
+                break
+            
             self.handle_messages(peer, message)
             
             await self.broadcast_peer_message(peer, message)
     
     def handle_messages(self: Self, peer: Peer, message: Message) -> None:
         match message:
+            case KeepAliveMessage():
+                self.handle_keep_alive_message(peer)
             case ChokeMessage():
                 self.handle_choke_message(peer)
             case UnchokeMessage():
@@ -85,6 +95,9 @@ class Swarm:
                 self.handle_bitfield_message(peer, message)
             case _:
                 pass
+    
+    def handle_keep_alive_message(self: Self, peer: Peer) -> None:
+        logger.debug(f"[{peer.addr_str}] - Received Keep-Alive message.")
     
     def handle_choke_message(self: Self, peer: Peer) -> None:
         logger.debug(f"[{peer.addr_str}] - Received choke message.")
@@ -114,7 +127,7 @@ class Swarm:
         except IndexError:
             logger.debug(f"[{peer.addr_str}] - Received have message with invalid piece index: {have_msg.index}.")
         
-        self.piece_manager.increment_piece_availability_count(index)
+        self.piece_manager.increment_piece_availability_count(have_msg.index)
     
     def handle_bitfield_message(self: Self, peer: Peer, bitfield_msg: BitFieldMessage) -> None:
         logger.debug(f"[{peer.addr_str}] - Received bitfield message.")
@@ -130,14 +143,15 @@ class Swarm:
     
     async def send_keep_alive_periodically(self: Self, peer: Peer) -> None:
         while peer.is_connected:
-            elapsed_time: int = asyncio.get_running_loop().time() - peer.last_write_time
-            remaining_time: int = self.keep_alive_interval - elapsed_time
+            elapsed_time: float = asyncio.get_running_loop().time() - peer.last_write_time
+            remaining_time: float = self.keep_alive_interval - elapsed_time
             
-            if remaining_time <= 0:
+            if remaining_time <= 0.0:
                 try:
                     await peer.send_keep_alive_message()
                 except PeerError:
                     await self.remove_peer(peer)
+                    break
                 else:
                     logger.debug(f"[{peer.addr_str}] - Sent a Keep-Alive message to the peer.")
                     await asyncio.sleep(self.keep_alive_interval)
@@ -146,10 +160,10 @@ class Swarm:
     
     async def monitor_inactivity(self: Self, peer: Peer) -> None:
         while peer.is_connected:
-            inactivity_duration: int = asyncio.get_running_loop().time() - peer.last_read_time
-            remaining_time: int = self.keep_alive_timeout - inactivity_duration
+            inactivity_duration: float = asyncio.get_running_loop().time() - peer.last_read_time
+            remaining_time: float = self.inactivity_timeout - inactivity_duration
             
-            if remaining_time <= 0:
+            if remaining_time <= 0.0:
                 logger.debug(f"[{peer.addr_str}] - Peer inactivity timeout. Disconnecting peer.")
                 await self.remove_peer(peer)
                 break
@@ -198,6 +212,27 @@ class Swarm:
         except asyncio.CancelledError:
             pass
     
+    def enable_peer_inactivity_timeout(self: Self, peer: Peer) -> None:
+        if self.inactivity_timeout is None:
+            raise ValueError("inactivity_timeout is None.")
+        if peer in self._peer_keep_alive_timeout_tasks:
+            raise ValueError("Peer already has a keep-alive timeout.")
+        
+        self._peer_keep_alive_timeout_tasks[peer] = asyncio.create_task(
+            self.monitor_inactivity(peer)
+        )
+    
+    async def disable_peer_inactivity_timeout(self: Self, peer: Peer) -> None:
+        task = self._peer_keep_alive_timeout_tasks.pop(peer, None)
+        if task is None:
+            raise ValueError("Peer inactivity timeout not enabled.")
+        
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    
     def enable_peer_keep_alive_interval(self: Self, peer: Peer) -> None:
         if self.keep_alive_interval is None:
             raise ValueError("keep_alive_interval is None.")
@@ -219,33 +254,12 @@ class Swarm:
         except asyncio.CancelledError:
             pass
     
-    def enable_peer_keep_alive_timeout(self: Self, peer: Peer) -> None:
-        if self.keep_alive_timeout is None:
-            raise ValueError("keep_alive_timeout is None.")
-        if peer in self._peer_keep_alive_timeout_tasks:
-            raise ValueError("Peer already has a keep-alive timeout.")
-        
-        self._peer_keep_alive_timeout_tasks[peer] = asyncio.create_task(
-            self.monitor_inactivity(peer)
-        )
-    
-    async def disable_peer_keep_alive_timeout(self: Self, peer: Peer) -> None:
-        task = self._peer_keep_alive_timeout_tasks.pop(peer, None)
-        if task is None:
-            raise ValueError("Peer keep-alive timeout not enabled.")
-        
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    
     async def connect_peer(self: Self, peer_addr: PeerAddress) -> Peer:
         if len(self.peers) >= self.max_connections:
             raise RuntimeError(f"Max peer connections exceeded ({self.max_connections})")
         
         peer: Peer = Peer(
-            ip=peer_addr.host,
+            host=peer_addr.host,
             port=peer_addr.port,
             bitfield=self.bitfield,
             connect_timeout=self.connect_timeout,
@@ -259,10 +273,10 @@ class Swarm:
     async def disconnect_peer(self: Self, peer: Peer) -> None:
         if peer in self._peer_message_reading_tasks:
             await self.stop_peer_message_reading(peer)
-        if peer in self._peer_keep_alive_tasks:
+        if peer in self._peer_keep_alive_timeout_tasks:
+            await self.disable_peer_inactivity_timeout(peer)
+        if peer in self._peer_keep_alive_interval_tasks:
             await self.disable_peer_keep_alive_interval(peer)
-        if peer in self._peer_monitor_inactivity_tasks:
-            await self.disable_peer_keep_alive_timeout(peer)
         
         await peer.disconnect()
     
@@ -290,10 +304,12 @@ class Swarm:
     
     async def remove_peer(self: Self, peer: Peer) -> None:
         if peer not in self.peers:
-            raise KeyError(f"Peer does not exists")
+            raise KeyError(f"Peer does not exists: {peer}")
         
         try:
             await self.disconnect_peer(peer)
+        except Exception as exc:
+            logger.debug(f"[{peer.addr_str}] - Failed to disconnect from peer: {exc}.")
         finally:
             self.peers.remove(peer)
     
@@ -313,46 +329,77 @@ class Swarm:
     
     def get_peers(
         self: Self,
-        exclude_peers: Peer | list[Peer] = None,
+        exclude_peers: Peer | list[Peer] | None = None,
         unchoked: bool | None = None,
         can_accept_more_incoming_block_requests: bool | None = None,
         can_accept_more_outgoing_block_requests: bool | None = None,
+        include_incoming_block_requests: tuple[Piece, Block] | list[tuple[Piece, Block]] | None = None,
+        include_outgoing_block_requests: tuple[Piece, Block] | list[tuple[Piece, Block]] | None = None,
+        exclude_incoming_block_requests: tuple[Piece, Block] | list[tuple[Piece, Block]] | None = None,
+        exclude_outgoing_block_requests: tuple[Piece, Block] | list[tuple[Piece, Block]] | None = None,
         has_pieces: int | tuple[int] | None = None,
-        missing_pieces: int | tuple[int] | None = None
+        missing_pieces: int | tuple[int] | None = None,
+        limit: int = 200
         ) -> Generator[Peer, None, None]:
         for peer in self.peers:
-            if exclude_peers:
+            if exclude_peers is not None:
                 peers: list[Peer] = [exclude_peers] if isinstance(exclude_peers, Peer) else exclude_peers
                 if peer in peers:
                     continue
+            
             if unchoked is not None:
-                is_choking: bool = peer.is_choking:
-                if unchoked and not is_choking:
+                is_choking: bool = peer.is_choking
+                if unchoked and is_choking:
                     continue
-                if not unchoked and is_choking:
+                if not unchoked and not is_choking:
                     continue
+            
             if can_accept_more_incoming_block_requests is not None:
                 accept: bool = peer.can_accept_more_incoming_block_requests()
-                if can_hold_incoming_block_requests and not accept:
+                if can_accept_more_incoming_block_requests and not accept:
                     continue
                 if not can_accept_more_incoming_block_requests and accept:
                     continue
+            
             if can_accept_more_outgoing_block_requests is not None:
                 accept: bool = peer.can_accept_more_outgoing_block_requests()
                 if can_accept_more_outgoing_block_requests and not accept:
                     continue
                 if not can_accept_more_outgoing_block_requests and accept:
                     continue
-            if has_pieces:
+            
+            if include_incoming_block_requests is not None:
+                block_requests: list[tuple[Piece, Block]] = [include_incoming_block_requests] if not isinstance(include_incoming_block_requests, list) else include_incoming_block_requests
+                if not all(block_req in peer.incoming_block_requests for block_req in block_requests):
+                    continue
+            
+            if include_outgoing_block_requests is not None:
+                block_requests: list[tuple[Piece, Block]] = [include_outgoing_block_requests] if not isinstance(include_outgoing_block_requests, list) else include_outgoing_block_requests
+                if not all(block_req in peer.outgoing_block_requests for block_req in block_requests):
+                    continue
+            
+            if exclude_incoming_block_requests is not None:
+                block_requests: list[tuple[Piece, Block]] = [exclude_incoming_block_requests] if not isinstance(exclude_incoming_block_requests, list) else exclude_incoming_block_requests
+                if all(block_req in peer.incoming_block_requests for block_req in block_requests):
+                    continue
+            
+            if exclude_outgoing_block_requests is not None:
+                block_requests: list[tuple[Piece, Block]] = [exclude_outgoing_block_requests] if not isinstance(exclude_outgoing_block_requests, list) else exclude_outgoing_block_requests
+                if all(block_req in peer.outgoing_block_requests for block_req in block_requests):
+                    continue
+            
+            if has_pieces is not None:
                 pieces: tuple[int] = [has_pieces] if not isinstance(has_pieces, tuple) else has_pieces
                 if not all(peer.bitfield.has_piece(piece) for piece in pieces):
                     continue
-            if missing_pieces:
+            
+            if missing_pieces is not None:
                 pieces: tuple[int] = [missing_pieces] if not isinstance(missing_pieces, tuple) else missing_pieces
                 if not all(not peer.bitfield.has_piece(piece) for piece in pieces):
                     continue
             
             yield peer
+            return
     
     async def broadcast_have_piece(self: Self, index: int) -> tuple[list[Peer], list[tuple[Peer, PeerError]]]:
         succeeded_peers: list[Peer] = []
@@ -379,4 +426,4 @@ class Swarm:
         return (succeeded_peers, failed_peers)
     
     async def close(self: Self) -> None:
-        await asyncio.gather(*(self.remove_peers(peer) for peer in self.peers))
+        await self.remove_peers(self.peers)

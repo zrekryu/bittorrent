@@ -142,6 +142,18 @@ class Peer:
     def can_accept_more_outgoing_block_requests(self: Self):
         return len(self.outgoing_block_requests) < self.max_outgoing_block_requests
     
+    def update_uploaded(self: Self, length: int) -> None:
+        if length < 0:
+            raise ValueError(f"Negative uploaded length is not allowed: {length}")
+        
+        self.uploaded += length
+    
+    def update_downloaded(self: Self, length: int) -> None:
+        if length < 0:
+            raise ValueError(f"Negative downloaded length is not allowed: {length}")
+        
+        self.downloaded += length
+    
     @property
     def is_connected(self: Self) -> bool:
         return self.writer is not None
@@ -156,6 +168,9 @@ class Peer:
         
         try:
             self.reader, self.writer = await asyncio.wait_for(asyncio.open_connection(self.host, self.port), timeout=self.connect_timeout)
+        except asyncio.TimeoutError as exc:
+            logger.error(f"[{self.addr_str}] - Failed to connect to peer due to timeout.")
+            raise PeerError(f"Failed to connect to peer due to timeout: {self.addr_str}")
         except Exception as exc:
             logger.error(f"[{self.addr_str}] - Failed to connect to peer: {type(exc).__name__}: {exc}")
             raise PeerError(f"Failed to connect to peer: {self.addr_str}")
@@ -198,8 +213,8 @@ class Peer:
             logger.error(f"[{self.addr_str}] - Peer handshake timed out.")
             raise PeerError(f"Peer handshake timed out: {self.addr_str}")
         except asyncio.IncompleteReadError:
-            logger.error(f"[{self.addr_str}] - Peer handshake length is not the expected number of bytes ({handshake.LENGTH}).")
-            raise PeerError(f"Peer [{self.addr_str}] handshake length is not the expected number of bytes ({handshake.LENGTH})")
+            logger.error(f"[{self.addr_str}] - Peer handshake length is not the expected number of bytes ({Handshake.LENGTH}).")
+            raise PeerError(f"Peer [{self.addr_str}] handshake length is not the expected number of bytes ({Handshake.LENGTH})")
     
     def verify_handshake(self: Self, handshake: Handshake, peer_handshake: Handshake) -> None:
         if peer_handshake.pstr != handshake.pstr:
