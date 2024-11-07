@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Self, TypedDict
 
+import aiofiles
+
 class FileEntry(TypedDict):
     length: int
     path: list[bytes]
@@ -43,7 +45,7 @@ class FileHandler:
         files: list[FileEntry] = []
         offset: int = piece_index * self.piece_length
         remaining_length: int = self.last_piece_length if piece_index == self.last_piece_index else self.piece_length
-        while remaining_length:
+        while remaining_length > 0:
             for file_index, start_offset, end_offset in self.file_offsets:
                 if start_offset <= offset <= end_offset:
                     self.files[file_index]["offset"] = offset - start_offset
@@ -58,7 +60,7 @@ class FileHandler:
         return files
     
     async def write_data(self: Self, path: str, offset: int, data: bytes) -> None:
-        async with aiofiles.open(path=path, mode="r+b") as file:
+        async with aiofiles.open(file=path, mode="r+b") as file:
             await file.seek(offset)
             await file.write(data)
     
@@ -84,7 +86,7 @@ class FileHandler:
             await self.write_data(str(path_obj), file["offset"], piece)
     
     async def read_data(self: Self, path: str, offset: int, data: bytes) -> bytes:
-        async with aiofiles.open(path=path, mode="r+b") as file:
+        async with aiofiles.open(file=path, mode="r+b") as file:
             await file.seek(offset)
             return await file.read(data)
     

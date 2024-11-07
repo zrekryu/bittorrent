@@ -28,9 +28,6 @@ from .file_handler import FileHandler
 logger: logging.Logger = logging.getLogger(__name__)
 
 class Leecher:
-    MAX_BLOCK_REQUESTS_TO_PEERS: int = 10
-    MAX_BLOCK_REQUESTS_PER_PEER: int = 10
-    BLOCK_RECEIVE_TIMEOUT: int = 30
     ACCEPT_UNREQUESTED_BLOCKS: bool = True
     
     def __init__(
@@ -39,9 +36,9 @@ class Leecher:
         piece_manager: PieceManager,
         swarm: Swarm,
         file_handler: FileHandler,
-        max_block_requests_to_peers: int = MAX_BLOCK_REQUESTS_TO_PEERS,
-        max_block_requests_per_peer: int = MAX_BLOCK_REQUESTS_PER_PEER,
-        block_receive_timeout: int = BLOCK_RECEIVE_TIMEOUT,
+        max_block_requests_to_peers: int = PieceRequester.MAX_BLOCK_REQUESTS_TO_PEERS,
+        max_block_requests_per_peer: int = PieceRequester.MAX_BLOCK_REQUESTS_PER_PEER,
+        block_receive_timeout: int = PieceRequester.BLOCK_RECEIVE_TIMEOUT,
         accept_unrequested_blocks: bool = ACCEPT_UNREQUESTED_BLOCKS
         ) -> None:
         self.handshake = handshake
@@ -91,10 +88,11 @@ class Leecher:
             return
         
         self.swarm.start_peer_message_reading(peer)
-        self.swarm.enable_peer_keep_alive_timeout(peer)
+        #self.swarm.enable_peer_inactivity_timeout(peer)
         self.swarm.enable_peer_keep_alive_interval(peer)
         
         await peer.send_interested_message()
+        logger.debug(f"[{peer.addr_str}] - Sent interested message to peer.")
     
     async def on_peer_message(self: Self) -> None:
         while True:
@@ -122,17 +120,19 @@ class Leecher:
         
         logger.debug(f"[{peer.addr_str}] - Received piece message: {index}:{begin}.")
         
-        if not self.piece_manager.has_requested_block(index, begin):
+        peer.update_uploaded(length)
+        
+        piece: Piece = self.piece_manager.get_piece(index)
+        block: Block = piece.get_block(begin)
+        
+        if not self.piece_manager.has_requested_block(piece, block):
             logger.debug(f"[{peer.addr_str}] - Received unrequested piece: {index}:{begin}.")
             
             if not self.accept_unrequested_blocks:
                 logger.debug(f"[{peer.addr_str}] - Rejected unrequested piece: {index}:{begin}.")
                 return
         else:
-            self.piece_manager.remove_requested_block(index, begin)
-        
-        piece: Piece = self.piece_manager.get_piece(index)
-        block: Block = piece.get_block(begin)
+            self.piece_manager.remove_requested_block(piece, block)
         
         if length != block.length:
             logger.error(f"[{peer.addr_str}] - Received invalid length of piece ({index}:{begin}): {length} (expected: {block.length}).")

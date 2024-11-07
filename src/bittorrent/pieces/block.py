@@ -43,4 +43,4 @@ class Block:
         self.data = b""
     
     def __repr__(self: Self) -> str:
-        return f"Block(begin={self.begin}, length={self.length}, status={self.status}, data={data})"
+        return f"Block(begin={self.begin}, length={self.length}, status={self.status}, data={self.data})"

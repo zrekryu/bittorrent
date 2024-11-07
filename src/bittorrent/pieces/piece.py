@@ -15,23 +15,30 @@ class Piece:
     def add_blocks(self: Self, blocks: list[Block]) -> None:
         self.blocks.extend(blocks)
     
+    def has_block(self: Self, begin: int) -> bool:
+        try:
+            next(block for block in self.blocks if block.begin == begin)
+            return True
+        except StopIteration:
+            return False
+    
     def get_block(self: Self, begin: int) -> Block:
         try:
-            return self.blocks[begin]
-        except IndexError:
-            raise IndexError(f"Block not found: {begin}")
+            return next(block for block in self.blocks if block.begin == begin)
+        except (ValueError, StopIteration):
+            raise ValueError(f"Block not found: {begin}") from None
     
     def set_all_blocks_status_as_missing(self: Self) -> None:
         for block in self.blocks:
-            block.set_block_status_as_missing()
+            block.set_status_as_missing()
     
     def set_all_blocks_status_as_requested(self: Self) -> None:
         for block in self.blocks:
-            block.set_block_status_as_requested()
+            block.set_status_as_requested()
     
     def set_all_blocks_status_as_available(self: Self) -> None:
         for block in self.blocks:
-            block.set_block_status_as_available()
+            block.set_status_as_available()
     
     def get_blocks_data(self: Self) -> bytes:
         return b"".join(block.data for block in self.blocks)

@@ -1,7 +1,8 @@
+from bisect import insort
 from collections import Counter, deque
 import hashlib
 import math
-from typing import Self
+from typing import Generator, Self
 
 from ..enums import BlockStatus
 from ..protocol.messages import BitFieldMessage
@@ -15,17 +16,17 @@ class PieceManager:
         pieces: list[Piece],
         pieces_hash: bytes,
         block_size: int = Block.BLOCK_SIZE,
-        sorty_by_rarity: bool = True
+        sort_by_rarity: bool = True
         ) -> None:
         self.pieces = pieces
         self.pieces_hash = pieces_hash
         self.block_size = block_size
-        self.sorty_by_rarity = sorty_by_rarity
-        
-        self.missing_blocks: list[tuple[int, int]] = list(self.get_missing_blocks())
-        self.requested_blocks: list[tuple[int, int]] = list(self.get_requested_blocks())
+        self.sort_by_rarity = sort_by_rarity
         
         self.pieces_availability_counter: Counter[int, int] = Counter({piece.index: 0 for piece in self.pieces})
+        
+        self.missing_blocks: list[tuple[Piece, Block]] = self.get_missing_blocks_sorted_by_rarity() if self.sort_by_rarity else list(self.get_missing_blocks())
+        self.requested_blocks: list[tuple[Piece, Block]] = list(self.get_requested_blocks())
         
         self.bitfield: BitFieldMessage = self.create_bitfield_from_pieces()
     
@@ -78,6 +79,11 @@ class PieceManager:
     def get_missing_blocks(self: Self) -> Generator[tuple[Piece, Block], None, None]:
         return ((piece, block) for piece in self.pieces for block in piece.get_missing_blocks())
     
+    def get_missing_blocks_sorted_by_rarity(self: Self) -> list[tuple[Piece, Block]]:
+        pieces_blocks: list[tuple[Piece, Block]] = [(piece, block) for piece in self.pieces for block in piece.get_missing_blocks()]
+        pieces_blocks.sort(key=lambda piece_block: self.pieces_availability_counter[piece_block[0]])
+        return pieces_blocks
+    
     def get_requested_blocks(self: Self) -> Generator[tuple[Piece, Block], None, None]:
         return ((piece, block) for piece in self.pieces for block in piece.get_requested_blocks())
     
@@ -103,38 +109,41 @@ class PieceManager:
     def all_pieces_available(self: Self) -> bool:
         return all(piece.all_blocks_available for piece in self.pieces)
     
-    def sort_missing_blocks_by_rarity(self: Self) -> None:
-        self.missing_blocks.sort(key=lambda piece_and_block: self.pieces_availability_counter[piece_and_block[0]])
-    
     def has_missing_block(self: Self, piece: Piece, block: Block) -> bool:
-        return (index, begin) in self.missing_blocks
+        return (piece, block) in self.missing_blocks
     
-    def has_requested_block(self: Self, piece: Piece, Block: block) -> bool:
-        return (index, begin) in self.requested_blocks
+    def has_requested_block(self: Self, piece: Piece, block: Block) -> bool:
+        return (piece, block) in self.requested_blocks
     
-    def add_missing_block(self: Self, piece: Piece, block: Block) -> None:
+    def add_missing_block(self: Self, piece: Piece, block: Block, skip_sort_by_rarity: bool = False) -> None:
         if (piece, block) in self.missing_blocks:
-            raise KeyError(f"Piece ({piece.index}) and Block ({block.begin}) already exists in missing blocks")
+            raise ValueError(f"Piece ({piece.index}) and Block ({block.begin}) already exists in missing blocks")
         
-        self.missing_blocks.append((piece, block))
+        if self.sort_by_rarity and not skip_sort_by_rarity:
+            self.add_and_sort_missing_block(piece, block)
+        else:
+            self.missing_blocks.append((piece, block))
     
-    def remove_missing_block(self: Self, piece: Piece, Block: Block) -> None:
+    def add_and_sort_missing_block(self: Self, piece: Piece, block: Block) -> None:
+        insort(self.missing_blocks, (piece, block), key=lambda piece_block: self.pieces_availability_counter[piece_block[0]])
+    
+    def remove_missing_block(self: Self, piece: Piece, block: Block) -> None:
         try:
             self.missing_blocks.remove((piece, block))
-        except IndexError:
-            raise IndexError(f"Piece ({piece.index}) and Block ({block.begin}) not found in missing blocks")
+        except ValueError:
+            raise ValueError(f"Piece ({piece.index}) and Block ({block.begin}) not found in missing blocks")
     
     def add_requested_block(self: Self, piece: Piece, block: Block) -> None:
-        if (index, begin) in self.requested_blocks:
-            raise IndexError(f"Piece ({piece.index}) and Block ({block.begin}) already exists in requested blocks")
+        if (piece, block) in self.requested_blocks:
+            raise ValueError(f"Piece ({piece.index}) and Block ({block.begin}) already exists in requested blocks")
         
         self.requested_blocks.append((piece, block))
     
     def remove_requested_block(self: Self, piece: Piece, block: Block) -> None:
-        if (index, begin) not in self.requested_blocks:
-            raise IndexError(f"Piece ({index}) and Block ({begin}) not found in requested blocks")
-        
-        self.requested_blocks.remove((piece, block))
+        try:
+            self.requested_blocks.remove((piece, block))
+        except:
+            raise ValueError(f"Piece ({piece.index}) and Block ({block.begin}) not found in requested blocks")
     
     def verify_piece(self: Self, index: int, piece: bytes) -> bool:
         piece_hash_begin: int = index * 20
