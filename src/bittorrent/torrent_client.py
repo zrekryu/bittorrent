@@ -121,9 +121,9 @@ class TorrentClient:
     async def announce_stopped_event_to_trackers(self: Self) -> None:
         tasks: list[asyncio.Task] = []
         for tracker, peers_info in self.tracker_peers_info.items():
-            peers = filter(lambda peer: (peer.ip, peer.port) in peers_info, self.swarm.peers)
-            uploaded: int = sum(peer.uploaded for peer in peers)
-            downloaded: int = sum(peer.downloaded for peer in peers)
+            peers = filter(lambda peer: (peer.host, peer.port) in peers_info, self.swarm.peers)
+            uploaded: int = sum(peer.downloaded for peer in peers)
+            downloaded: int = sum(peer.uploaded for peer in peers)
             left: int = self.torrent.total_length
             
             if isinstance(tracker, TrackerHTTP):
@@ -183,12 +183,12 @@ class TorrentClient:
                 available=False
             ),
             piece_manager=self.piece_manager,
-            connect_timeout=self.settings.get_var("connect_timeout"),
-            handshake_timeout=self.settings.get_var("handshake_timeout"),
+            connect_timeout=self.settings.get_var("peer_connect_timeout"),
+            handshake_timeout=self.settings.get_var("peer_handshake_timeout"),
             chunk_size=self.settings.get_var("chunk_size"),
             max_connections=self.settings.get_var("max_connections"),
             keep_alive_interval=self.settings.get_var("keep_alive_interval"),
-            keep_alive_timeout=self.settings.get_var("keep_alive_timeout")
+            inactivity_timeout=self.settings.get_var("inactivity_timeout")
             )
     
     def initialize_file_handler(self: Self) -> FileHandler:
@@ -198,7 +198,7 @@ class TorrentClient:
             last_piece_length=self.torrent.last_piece_length,
             last_piece_index=self.torrent.last_piece_index,
             path=self.settings.get_var("download_path"),
-            files=self.torrent.info[b"info"][b"files"] if self.torrent.has_multiple_files else None
+            files=self.torrent.info[b"files"] if self.torrent.has_multiple_files else None
             )
     
     def initialize_leecher(self: Self) -> Leecher:
@@ -210,7 +210,7 @@ class TorrentClient:
             max_block_requests_per_peer=self.settings.get_var("max_block_requests_per_peer")
             )
     
-    async def add_peers_info_to_tracker(self: Self, tracker: TrackerHTTP | TrackerUDP, peers: list[Peer]) -> None:
+    async def add_peer_addresses_to_tracker(self: Self, tracker: TrackerHTTP | TrackerUDP, peers: list[Peer]) -> None:
         if tracker not in self.tracker_peers_info:
             self.tracker_peers_info[tracker] = []
         
@@ -242,7 +242,7 @@ class TorrentClient:
         for tracker, response in trackers_responses:
             peer_addresses: list[PeerAddress] = decode_compact_peers(response.peers) if isinstance(response.peers, bytes) else response.peers
             
-            await self.add_peers_address_to_tracker(tracker, peer_addresses)
+            await self.add_peer_addresses_to_tracker(tracker, peer_addresses)
             await self.swarm.add_peers(peer_addresses)
     
     async def stop_leeching(self: Self) -> None:
@@ -253,10 +253,7 @@ class TorrentClient:
     
     async def wait_until_download_complete(self: Self) -> None:
         while not self.piece_manager.all_pieces_available:
-            try:
-                await asyncio.sleep(1)
-            except asyncio.CancelledError:
-                break
+            await asyncio.sleep(1)
     
     async def close(self: Self) -> None:
         if self.multi_tracker_announcer:

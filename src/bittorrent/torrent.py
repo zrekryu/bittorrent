@@ -36,8 +36,11 @@ class Torrent:
     
     @classmethod
     async def from_file(cls: type[Self], path: str) -> Self:
-        async with aiofiles.open(path, mode="rb") as file:
-            return cls(await file.read())
+        try:
+            async with aiofiles.open(path, mode="rb") as file:
+                return cls(await file.read())
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Torrent file not found: {path}") from None
     
     def __repr__(self: Self) -> str:
         return f"Torrent(name={self.name})"
