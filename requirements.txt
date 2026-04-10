@@ -1,0 +1,3 @@
+aiofiles
+bencode2
+httpx
